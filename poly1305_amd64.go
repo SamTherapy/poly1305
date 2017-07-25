@@ -11,27 +11,32 @@ import (
 	"io"
 )
 
+const (
+	avx2Size   = 512
+	avx2Buffer = 8 * TagSize
+)
+
 var useAVX2 = cpu.X86.HasAVX2
 
 //go:noescape
 func initialize(state *[7]uint64, key *[32]byte)
 
 //go:noescape
-func initializeAVX2(state *[512]byte, key *[32]byte)
+func initializeAVX2(state *[avx2Size]byte, key *[32]byte)
 
 //go:noescape
 func update(state *[7]uint64, msg []byte)
 
 //go:noescape
-func updateAVX2(state *[512]byte, msg []byte)
+func updateAVX2(state *[avx2Size]byte, msg []byte)
 
 //go:noescape
 func finalize(tag *[TagSize]byte, state *[7]uint64)
 
 //go:noescape
-func finalizeAVX2(tag *[TagSize]byte, state *[512]byte)
+func finalizeAVX2(tag *[TagSize]byte, state *[avx2Size]byte)
 
-// compiler asserts - check that poly1305Hash and poly1305HashAVX2 implements the hash interface
+// compiler asserts - check that poly1305Hash and poly1305HashAVX2 implement the hash interface
 var (
 	_ (hash) = &poly1305Hash{}
 	_ (hash) = &poly1305HashAVX2{}
@@ -51,8 +56,8 @@ func Sum(msg []byte, key [32]byte) [TagSize]byte {
 		msg = []byte{}
 	}
 	var out [TagSize]byte
-	if useAVX2 && len(msg) > 8*TagSize {
-		var state [512]byte
+	if useAVX2 && len(msg) > avx2Buffer {
+		var state [avx2Size]byte
 		initializeAVX2(&state, &key)
 		updateAVX2(&state, msg)
 		finalizeAVX2(&out, &state)
@@ -93,7 +98,7 @@ func (h *Hash) Size() int { return TagSize }
 // Write adds more data to the running Poly1305 hash.
 // This function should return a non-nil error if a call
 // to Write happens after a call to Sum. So it is not possible
-// to compute the checksum and than add more data.
+// to compute the checksum and then add more data.
 func (h *Hash) Write(msg []byte) (int, error) {
 	if h.done {
 		return 0, errWriteAfterSum
@@ -121,7 +126,7 @@ func (h *poly1305Hash) Write(p []byte) (n int, err error) {
 	n = len(p)
 	if h.off > 0 {
 		dif := TagSize - h.off
-		if n <= dif {
+		if n < dif {
 			h.off += copy(h.buf[h.off:], p)
 			return n, nil
 		}
@@ -130,7 +135,7 @@ func (h *poly1305Hash) Write(p []byte) (n int, err error) {
 		p = p[dif:]
 		h.off = 0
 	}
-	// process full 16-byte blocks
+	// process full multiples of 16-byte blocks
 	if nn := len(p) & (^(TagSize - 1)); nn > 0 {
 		update(&(h.state), p[:nn])
 		p = p[nn:]
@@ -153,7 +158,7 @@ func (h *poly1305Hash) Sum(b []byte) []byte {
 
 type poly1305HashAVX2 struct {
 	//  r[0] | r^2[0] | r[1] | r^2[1] | r[2] | r^2[2] | r[3] | r^2[3] | r[4] | r^2[4] | r[1]*5 | r^2[1]*5 | r[2]*5 | r^2[2]*5 r[3]*5 | r^2[3]*5 r[4]*5 | r^2[4]*5
-	state [512]byte
+	state [avx2Size]byte
 
 	buffer [8 * TagSize]byte
 	offset int
@@ -163,7 +168,7 @@ func (h *poly1305HashAVX2) Write(p []byte) (n int, err error) {
 	n = len(p)
 	if h.offset > 0 {
 		remaining := 8*TagSize - h.offset
-		if n <= remaining {
+		if n < remaining {
 			h.offset += copy(h.buffer[h.offset:], p)
 			return n, nil
 		}
@@ -172,7 +177,7 @@ func (h *poly1305HashAVX2) Write(p []byte) (n int, err error) {
 		p = p[remaining:]
 		h.offset = 0
 	}
-	// process full 8*16-byte blocks
+	// process full multiples of 8*16-byte blocks
 	if nn := len(p) & (^(8*TagSize - 1)); nn > 0 {
 		updateAVX2(&h.state, p[:nn])
 		p = p[nn:]
