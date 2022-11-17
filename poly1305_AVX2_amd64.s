@@ -4,7 +4,8 @@
 
 // This code is inspired by the poly1305 AVX2 implementation by Shay Gueron, and Vlad Krasnov.
 
-// +build amd64, !gccgo, !appengine
+//go:build amd64 && !gccgo && !appengine
+// +build amd64,!gccgo,!appengine
 
 #include "textflag.h"
 
